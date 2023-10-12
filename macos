@@ -1,0 +1,525 @@
+import json
+import os
+import sys
+import time
+
+import cv2
+import discord as discord
+import numpy as np
+import requests
+import tensorflow as tf
+from discordwebhook import Discord
+from twilio.rest import Client
+
+# the directories for the saved images & text file
+FRIDGE = "/Users/wolfhigashi/Desktop/CAPSTONE/FRIDGE"
+PREDICTED = "/Users/wolfhigashi/Desktop/CAPSTONE/PREDICTED/predictions.txt"
+image = "/Users/wolfhigashi/Desktop/CAPSTONE/FRIDGE/MAIN_IMG/fridge_image.jpg"
+MAIN_IMG = "/Users/wolfhigashi/Desktop/CAPSTONE/FRIDGE/MAIN_IMG"
+
+# using discord as a way to notify user
+webhook = "https://discord.com/api/webhooks/1095960174050676816/9aIdFvg7HCRNTmyekV9bvdFsN9MkZynHYjiJvObPPuvKn39DjA8a2JcQzMQaNBgPGbB1"
+discord = Discord(url=webhook)
+avatar = "https://static.vecteezy.com/system/resources/previews/000/582/145/original/refrigerator-icon-vector-illustration.jpg"
+
+# writes type-writer style messages on the console UI
+def write(message):
+
+    for char in message:
+        sys.stdout.write(char)
+        sys.stdout.flush()
+        time.sleep(0.05)
+
+# initiates webcam capture
+def capture():
+
+    # Create a VideoCapture object to access the webcam
+    cap = cv2.VideoCapture(0)
+    # Check if the webcam is opened successfully
+    if not cap.isOpened():
+        print("Could not open webcam")
+        exit()
+
+    # Add a delay to allow the camera to adjust the shutter
+    time.sleep(2)
+
+    # Read a frame from the webcam
+    ret, frame = cap.read()
+    # Release the VideoCapture object
+    cap.release()
+    # Check if the frame is captured successfully
+    if not ret:
+        print("Could not capture frame")
+        exit()
+    # Adjust brightness and contrast
+    # alpha = 1.5  # Contrast control (1.0-3.0)
+    # beta = 50  # Brightness control (0-100)
+    # frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
+
+    return frame
+
+# initial scan of the fridge (full image) -> 'FRIDGE' folder
+def full_image():
+
+    frame = capture()
+
+    # Set the path and filename for the image
+    folder_path = MAIN_IMG
+    filename = "fridge_image.jpg"
+    file_path = os.path.join(folder_path, filename)
+    # Save the image
+    cv2.imwrite(file_path, frame)
+    # print(f"Image saved successfully at {file_path}")
+    write(message="\nCAPTURE 1: ")
+    print("COMPLETE!")
+
+def full_scan():
+
+    frame = capture()
+
+    # Set the path and filename for the image
+    folder_path = FRIDGE
+    filename = "fridge_image.jpg"
+    file_path = os.path.join(folder_path, filename)
+    # Save the image
+    cv2.imwrite(file_path, frame)
+    # print(f"Image saved successfully at {file_path}")
+    write(message="\nCAPTURE 2: ")
+    print("COMPLETE!")
+
+# splits the initial scan into four quadrants (four images) -> 'FRIDGE' folder
+def quad_scan():
+
+    frame = capture()
+
+    # Crop the image into four quadrants
+    height, width, channels = frame.shape
+    half_height = height // 2
+    half_width = width // 2
+    top_left = frame[0:half_height, 0:half_width]
+    top_right = frame[0:half_height, half_width:width]
+    bottom_left = frame[half_height:height, 0:half_width]
+    bottom_right = frame[half_height:height, half_width:width]
+    # Set the path and filenames for the images
+    folder_path = FRIDGE
+    top_left_filename = "fridge_image_top_left.jpg"
+    top_right_filename = "fridge_image_top_right.jpg"
+    bottom_left_filename = "fridge_image_bottom_left.jpg"
+    bottom_right_filename = "fridge_image_bottom_right.jpg"
+    top_left_path = os.path.join(folder_path, top_left_filename)
+    top_right_path = os.path.join(folder_path, top_right_filename)
+    bottom_left_path = os.path.join(folder_path, bottom_left_filename)
+    bottom_right_path = os.path.join(folder_path, bottom_right_filename)
+    # Save the images
+    cv2.imwrite(top_left_path, top_left)
+    cv2.imwrite(top_right_path, top_right)
+    cv2.imwrite(bottom_left_path, bottom_left)
+    cv2.imwrite(bottom_right_path, bottom_right)
+    # print(f"Images saved successfully at {folder_path}")
+    write(message="\nCAPTURE 3: ")
+    print("COMPLETE!\n")
+
+# tensorflow scans images -> 'FRIDGE' folder -> outputs text file -> 'PREDICTION' folder
+def tensor_scan():
+
+    write(message="\nANALYZING CAPTURES WITH TENSORFLOW\n\n")
+
+    global output_file_path
+
+    # load the pre-trained InceptionV3 model
+    model = tf.keras.applications.InceptionV3(weights='imagenet')
+
+    # set the folder path containing the images to classify
+    folder_path = FRIDGE
+
+    # set the path to the output text file
+    output_file_path = PREDICTED
+
+    # get a list of all the image files in the folder
+    image_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if
+                   f.endswith('.jpg') or f.endswith('.jpeg') or f.endswith('.png')]
+
+    # create an empty set to store unique predicted class labels
+    unique_predictions = set()
+
+    # loop over each image file and classify it
+    for img_path in image_files:
+        # load and preprocess the image
+        img = tf.keras.preprocessing.image.load_img(img_path, target_size=(299, 299))
+        img_array = tf.keras.preprocessing.image.img_to_array(img)
+        img_array = np.expand_dims(img_array, axis=0)
+        img_array = tf.keras.applications.inception_v3.preprocess_input(img_array)
+
+        # use the model to make a prediction on the image
+        prediction = model.predict(img_array)
+
+        # decode the prediction to get the predicted class label
+        predicted_class = tf.keras.applications.inception_v3.decode_predictions(prediction, top=1)[0][0]
+
+        # add the predicted class label to the set of unique predictions
+        unique_predictions.add(predicted_class[1].replace('_', ' '))
+
+    # write the set of unique predicted class labels to a text file
+    with open(output_file_path, 'w') as f:
+        for prediction in unique_predictions:
+            f.write('• ' + prediction + '\n')
+
+def tensor_scan1():
+
+    write(message="\nANALYZING CAPTURES WITH TENSORFLOW\n\n")
+
+    global output_file_path
+
+    # load the pre-trained ResNet50 model
+    model = tf.keras.applications.ResNet50(weights='imagenet')
+
+    # set the folder path containing the images to classify
+    folder_path = FRIDGE
+
+    # set the path to the output text file
+    output_file_path = PREDICTED
+
+    # get a list of all the image files in the folder
+    image_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if
+                   f.endswith('.jpg') or f.endswith('.jpeg') or f.endswith('.png')]
+
+    # create an empty set to store unique predicted class labels
+    unique_predictions = set()
+
+    # loop over each image file and classify it
+    for img_path in image_files:
+        # load and preprocess the image
+        img = tf.keras.preprocessing.image.load_img(img_path, target_size=(224, 224))
+        img_array = tf.keras.preprocessing.image.img_to_array(img)
+        img_array = np.expand_dims(img_array, axis=0)
+        img_array = tf.keras.applications.resnet50.preprocess_input(img_array)
+
+        # use the model to make a prediction on the image
+        prediction = model.predict(img_array)
+
+        # decode the prediction to get the predicted class label
+        predicted_class = tf.keras.applications.resnet50.decode_predictions(prediction, top=1)[0][0]
+
+        # add the predicted class label to the set of unique predictions
+        unique_predictions.add(predicted_class[1].replace('_', ' '))
+
+    # write the set of unique predicted class labels to a text file
+    with open(output_file_path, 'w') as f:
+        for prediction in unique_predictions:
+            f.write('• ' + prediction + '\n')
+
+def tensor_scan2():
+
+    write(message="\nANALYZING CAPTURES WITH TENSORFLOW\n\n")
+
+    global output_file_path
+
+    # load the pre-trained Xception model
+    model = tf.keras.applications.Xception(weights='imagenet')
+
+    # set the folder path containing the images to classify
+    folder_path = FRIDGE
+
+    # set the path to the output text file
+    output_file_path = PREDICTED
+
+    # get a list of all the image files in the folder
+    image_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if
+                   f.endswith('.jpg') or f.endswith('.jpeg') or f.endswith('.png')]
+
+    # create an empty set to store unique predicted class labels
+    unique_predictions = set()
+
+    # loop over each image file and classify it
+    for img_path in image_files:
+        # load and preprocess the image
+        img = tf.keras.preprocessing.image.load_img(img_path, target_size=(299, 299))
+        img_array = tf.keras.preprocessing.image.img_to_array(img)
+        img_array = np.expand_dims(img_array, axis=0)
+        img_array = tf.keras.applications.xception.preprocess_input(img_array)
+
+        # use the model to make a prediction on the image
+        prediction = model.predict(img_array)
+
+        # decode the prediction to get the predicted class label
+        predicted_class = tf.keras.applications.xception.decode_predictions(prediction, top=1)[0][0]
+
+        # add the predicted class label to the set of unique predictions
+        unique_predictions.add(predicted_class[1].replace('_', ' '))
+
+    # write the set of unique predicted class labels to a text file
+    with open(output_file_path, 'w') as f:
+        for prediction in unique_predictions:
+            f.write('• ' + prediction + '\n')
+
+def tensor_scan3():
+    write(message="\nANALYZING CAPTURES WITH TENSORFLOW\n\n")
+    global output_file_path
+
+    # Load the EfficientNetB7 model
+    model = tf.keras.applications.EfficientNetB7(weights='imagenet', include_top=True, input_shape=(600, 600, 3))
+
+    # Set the folder path containing the images to classify
+    folder_path = FRIDGE
+
+    # Set the path to the output text file
+    output_file_path = PREDICTED
+
+    # Get a list of all the image files in the folder
+    image_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.jpg') or f.endswith('.jpeg') or f.endswith('.png')]
+
+    # Create an empty set to store unique predicted class labels
+    unique_predictions = set()
+
+    # Loop over each image file and classify it
+    for img_path in image_files:
+        # Load and preprocess the image
+        img = tf.keras.preprocessing.image.load_img(img_path, target_size=(600, 600))
+        img_array = tf.keras.preprocessing.image.img_to_array(img)
+        img_array = np.expand_dims(img_array, axis=0)
+        img_array = tf.keras.applications.efficientnet.preprocess_input(img_array)
+
+        # Use the model to make a prediction on the image
+        prediction = model.predict(img_array)
+
+        # Decode the prediction to get the predicted class label
+        predicted_class = tf.keras.applications.imagenet_utils.decode_predictions(prediction, top=1)[0][0]
+
+        # Add the predicted class label to the set of unique predictions
+        unique_predictions.add(predicted_class[1].replace('_', ' '))
+
+    # Write the set of unique predicted class labels to a text file
+    with open(output_file_path, 'w') as f:
+        for prediction in unique_predictions:
+            f.write('• ' + prediction + '\n')
+
+def tensor_scan4():
+    write(message="\nANALYZING CAPTURES WITH TENSORFLOW\n\n")
+    global output_file_path
+
+    # Load the pre-trained EfficientNetV2L model
+    model = tf.keras.applications.EfficientNetV2L(include_top=True, weights='imagenet', input_shape=(480, 480, 3))
+
+    # Set the folder path containing the images to classify
+    folder_path = FRIDGE
+
+    # Set the path to the output text file
+    output_file_path = PREDICTED
+
+    # Get a list of all the image files in the folder
+    image_files = [os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.jpg') or f.endswith('.jpeg') or f.endswith('.png')]
+
+    # Create an empty set to store unique predicted class labels
+    unique_predictions = set()
+
+    # Loop over each image file and classify it
+    for img_path in image_files:
+        # Load and preprocess the image
+        img = tf.keras.preprocessing.image.load_img(img_path, target_size=(480, 480))
+        img_array = tf.keras.preprocessing.image.img_to_array(img)
+        img_array = np.expand_dims(img_array, axis=0)
+        img_array = tf.keras.applications.efficientnet.preprocess_input(img_array)
+
+        # Use the model to make a prediction on the image
+        prediction = model.predict(img_array)
+
+        # Decode the prediction to get the predicted class label
+        predicted_class = tf.keras.applications.imagenet_utils.decode_predictions(prediction, top=1)[0][0]
+
+        # Add the predicted class label to the set of unique predictions
+        unique_predictions.add(predicted_class[1].replace('_', ' '))
+
+    # Write the set of unique predicted class labels to a text file
+    with open(output_file_path, 'w') as f:
+        for prediction in unique_predictions:
+            f.write('• ' + prediction + '\n')
+
+# scans the text file + attaches full capture -> discord
+def send():
+
+    # Reads the contents within the file saved from Tensorflow
+    with open(PREDICTED, 'r') as f:
+        file_contents = f.read()
+        print("\nITEMS FOUND: \n")
+        write(message=file_contents)
+
+    discord.post(content="\nㅤ\n**PREVIEW OF FRIDGE**\nㅤ\n", file={"file1": open(image, "rb")})
+    discord.post(content="\nㅤ\n**ITEMS IN YOUR FRIDGE**\nㅤ\n")
+    discord.post(content=file_contents)
+
+    write(message="\nSUCCESSFULLY SENT LIST TO DISCORD & SMS !\n")
+
+# sends scanned text file & sends item list -> SMS text
+def sms():
+
+    file_path = PREDICTED
+
+    # Reads the contents within the file saved from Tensorflow
+    with open(file_path, 'r') as f:
+        file_contents = f.read()
+
+    account_sid = "AC37e5afca9c6c292d254d79824c2cb486"
+    auth_token = "9c72d332bf36a3e1fb46b7ac9d115aff"
+    client = Client(account_sid, auth_token)
+    message = client.messages.create(
+        body='\n\nITEMS IN YOUR FRIDGE:\n\n' + file_contents,
+        from_="+14345954350",
+        to="+14167286464"
+    )
+    print("\n ")
+    print(message.sid)
+
+# determines calories for known food items in the image scan (text file)
+def disco_facts():
+    discord.post(content="\nㅤ\n**NUTRITIONAL FACTS**\nㅤ\n")
+
+    # set the API endpoint and API key
+    endpoint = "https://api.nal.usda.gov/fdc/v1/search"
+    api_key = "QpsCiLx41euREJtAnTqeSLyG4X6gMq5SCVN0tPJX"
+
+    # read the list of food items from a text file
+    with open(PREDICTED, "r") as f:
+        foods = f.read().splitlines()
+
+    # create the payload to send to Discord
+    webhook_url = webhook
+    payload = {}
+
+    # loop over each food item and search the API for nutrition facts
+    for food in foods:
+        params = {
+            "api_key": api_key,
+            "generalSearchInput": food,
+            "requireAllWords": "true",
+            "pageSize": "1",
+            "sortField": "dataType.keyword",
+            "sortDirection": "desc"
+        }
+        response = requests.get(endpoint, params=params).json()
+        if response["foods"]:
+            item = response["foods"][0]
+            nutrients = item["foodNutrients"]
+            food_name = item['description']
+            payload['content'] = f"**Food:** {food_name}\n"
+
+            # create table headers
+            table_headers = ["NUTRIENTS", "AMOUNT"]
+            table_rows = []
+
+            for nutrient in nutrients:
+                nutrient_name = nutrient['nutrientName']
+                if nutrient_name == 'Energy':
+                    calories = nutrient['value']
+                    unit = nutrient['unitName']
+                    table_rows.append(["Calories", f"{calories} {unit}"])
+                elif nutrient_name == 'Protein':
+                    protein = nutrient['value']
+                    unit = nutrient['unitName']
+                    table_rows.append(["Protein", f"{protein} {unit}"])
+                elif nutrient_name == 'Total lipid (fat)':
+                    fat = nutrient['value']
+                    unit = nutrient['unitName']
+                    table_rows.append(["Fat", f"{fat} {unit}"])
+                elif nutrient_name == 'Carbohydrates, by difference':
+                    carbs = nutrient['value']
+                    unit = nutrient['unitName']
+                    table_rows.append(["Carbohydrates", f"{carbs} {unit}"])
+                elif nutrient_name == 'Sugars, total including NLEA':
+                    sugar = nutrient['value']
+                    unit = nutrient['unitName']
+                    table_rows.append(["Sugar", f"{sugar} {unit}"])
+
+            # create table in Markdown format
+            max_col_width = max(len(header) for header in table_headers)
+            table = " | ".join([header.ljust(max_col_width) for header in table_headers]) + "\n"
+            table += "|".join(["-" * (max_col_width + 1)] * len(table_headers)) + "\n"
+            for row in table_rows:
+                table += " | ".join([str(item).ljust(max_col_width) for item in row]) + "\n"
+
+            payload['content'] += f"```\n{table}```"
+
+            # send the payload to the Discord webhook
+            headers = {
+                'Content-Type': 'application/json'
+            }
+            requests.post(webhook_url, headers=headers, data=json.dumps(payload))
+        else:
+            payload
+
+    write(message="\nNOW RETRIEVING THE NUTRITION FACTS\n\n\n")
+
+def display_facts():
+    # set the API endpoint and API key
+    endpoint = "https://api.nal.usda.gov/fdc/v1/search"
+    api_key = "QpsCiLx41euREJtAnTqeSLyG4X6gMq5SCVN0tPJX"
+    # read the list of food items from a text file
+    with open(PREDICTED, "r") as f:
+        foods = f.read().splitlines()
+    # loop over each food item and search the API for nutrition facts
+    nutrition_info = []
+    for food in foods:
+        params = {
+            "api_key": api_key,
+            "generalSearchInput": food,
+            "requireAllWords": "true",
+            "pageSize": "1",
+            "sortField": "dataType.keyword",
+            "sortDirection": "desc"
+        }
+        response = requests.get(endpoint, params=params).json()
+        if response["foods"]:
+            item = response["foods"][0]
+            nutrients = item["foodNutrients"]
+            food_info = {
+                "food_name": item["description"],
+                "serving_size": item.get("servingSize", "N/A"),
+                "calories": None
+            }
+            for nutrient in nutrients:
+                if nutrient["nutrientName"] == "Energy":
+                    food_info["calories"] = nutrient["value"]
+            nutrition_info.append(food_info)
+        else:
+            print(f"No results found for {food}\n")
+
+    for food in nutrition_info:
+        print(f"Food: {food['food_name']}")
+        print(f"Serving Size: {food['serving_size']}")
+        print(f"Calories: {food['calories']} kcal")
+        print()
+
+    return nutrition_info
+
+def temperature():
+    write(message="\nRETRIEVING TEMPERATURE\n")
+
+    with open('/sys/class/thermal/thermal_zone0/temp') as temp_file:
+        temp = int(temp_file.read()) / 1000.0
+
+    print("\nTemperature = {}°C".format(temp))
+
+    # post the temperature to Discord
+
+    discord.post(content="\nㅤ\n**CURRENT TEMPERATURE**\nㅤ\n")
+    discord.post(content="• {}°C".format(temp))
+
+def run():
+    print("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
+    write(message="SCANNING THE CONTENTS OF YOUR FRIDGE\n")
+
+    full_image()
+    full_scan()
+    quad_scan()
+    tensor_scan4()
+    send()
+    disco_facts()
+    display_facts()
+    #sms()
+    #temperature()
+
+    write(message="\nTASKS COMPLETED !\n")
+
+run()
+
+
+
